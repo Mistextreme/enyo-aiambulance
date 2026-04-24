@@ -87,7 +87,7 @@ local function isInOnlyAirZone(coords)
             if isInsideRect(zone, coords) then return true end
         end
     end
-    -- Hard-coded Cayo Perico island detection
+    -- Hard-coded Cayo Perico island detection (separate from Config.OnlyAirZones entries)
     if Config.cayoAirAmbulance then
         local minX, maxX = 3667.6230, 5863.0356
         local minY, maxY = -6076.5122, -4227.0049
@@ -119,9 +119,9 @@ end
 --------------------------------------------------------------
 
 local function determineDispatchType(playerCoords)
-    if Config.onlyAirAmbulance              then return "heli" end
-    if isInOnlyAirZone(playerCoords)        then return "heli" end
-    if IsEntityInWater(PlayerPedId())        then return "boat" end
+    if Config.onlyAirAmbulance        then return "heli" end
+    if isInOnlyAirZone(playerCoords)  then return "heli" end
+    if IsEntityInWater(PlayerPedId()) then return "boat" end
     return "ambulance"
 end
 
@@ -167,17 +167,16 @@ local function spawnMedicPed(vehicle, seat)
     return ped
 end
 
--- Ground ambulance spawn at a random point Config.maxSpawnDistance away
+-- Ground ambulance: spawns at a randomised point within Config.maxSpawnDistance of the player
 local function spawnAmbulance(playerCoords)
-    local angle   = math.random(0, 360)
-    local dist    = math.random(math.floor(Config.maxSpawnDistance * 0.55), Config.maxSpawnDistance)
-    local rad     = math.rad(angle)
-    local sx      = playerCoords.x + dist * math.cos(rad)
-    local sy      = playerCoords.y + dist * math.sin(rad)
-    local sz      = playerCoords.z
-    local gz, ok  = GetGroundZFor_3dCoord(sx, sy, sz + 50.0, false)
+    local angle  = math.random(0, 360)
+    local dist   = math.random(math.floor(Config.maxSpawnDistance * 0.55), Config.maxSpawnDistance)
+    local rad    = math.rad(angle)
+    local sx     = playerCoords.x + dist * math.cos(rad)
+    local sy     = playerCoords.y + dist * math.sin(rad)
+    local sz     = playerCoords.z
+    local gz, ok = GetGroundZFor_3dCoord(sx, sy, sz + 50.0, false)
     if ok then sz = gz end
-    local spawnCoords = vector3(sx, sy, sz)
 
     local modelHash = GetHashKey(Config.AmbulanceModel)
     if not loadModel(modelHash) then return nil, nil end
@@ -194,11 +193,11 @@ local function spawnAmbulance(playerCoords)
     local ped = spawnMedicPed(vehicle, -1)
     if not ped then DeleteVehicle(vehicle) return nil, nil end
 
-    if Config.debug then print("[enyo-aiambulance] Ambulance spawned at " .. tostring(spawnCoords)) end
+    if Config.debug then print("[enyo-aiambulance] Ambulance spawned at " .. sx .. ", " .. sy .. ", " .. sz) end
     return ped, vehicle
 end
 
--- Helicopter spawn above the player
+-- Helicopter: spawns above the player position
 local function spawnHeli(playerCoords)
     local sx = playerCoords.x + math.random(-100, 100)
     local sy = playerCoords.y + math.random(-100, 100)
@@ -223,7 +222,7 @@ local function spawnHeli(playerCoords)
     return ped, vehicle
 end
 
--- Boat spawn at the hospital's waterPoint
+-- Boat: spawns at the hospital's waterPoint
 local function spawnBoat(waterPoint, playerCoords)
     local modelHash = GetHashKey(Config.BoatModel)
     if not loadModel(modelHash) then return nil, nil end
@@ -252,8 +251,8 @@ local function waitForVehicleToReach(vehicle, targetCoords, threshold, timeoutMs
     timeoutMs = timeoutMs or 90000
     local elapsed = 0
     while elapsed < timeoutMs do
-        if cancelDispatch                            then return false end
-        if not DoesEntityExist(vehicle)              then return false end
+        if cancelDispatch                              then return false end
+        if not DoesEntityExist(vehicle)               then return false end
         if #(GetEntityCoords(vehicle) - targetCoords) <= threshold then return true end
         Wait(500)
         elapsed = elapsed + 500
@@ -342,30 +341,32 @@ local function groundRescueSequence(medicPed, vehicle, playerCoords, hospital)
     if not waitForVehicleToReach(vehicle, hospital.parking, 12.0, 120000) then return end
     if cancelDispatch then return end
 
-    -- 8. Medic exits vehicle then handles interior path or stays outside
+    -- 8. Medic exits; walk player through interior path or drop outside
     TaskLeaveVehicle(medicPed, vehicle, 0)
     Wait(2000)
 
     if hospital.goInside and hospital.pathInside then
-        -- Remove player from vehicle
         TaskLeaveVehicle(PlayerPedId(), vehicle, 0)
         Wait(2000)
         if cancelDispatch then return end
 
-        -- Walk through each interior waypoint carrying the player
+        -- Attach the player once before entering the waypoint loop.
+        -- Calling AttachEntityToEntity on every iteration would re-attach an already
+        -- attached entity each waypoint, causing unnecessary snapping.
+        attachPlayerToPed(medicPed)
+
+        -- pathInside uses string keys ["1"],["2"],... as defined in config.lua
         local i = 1
         while true do
             local point = hospital.pathInside[tostring(i)]
             if not point then break end
             if cancelDispatch then detachPlayer() return end
-            attachPlayerToPed(medicPed)
             TaskGoToCoordAnyMeans(medicPed, point.x, point.y, point.z, 1.2, 0, false, 786603, 0.0)
             waitForPedToReach(medicPed, point, 2.5, 15000)
             i = i + 1
         end
         detachPlayer()
     else
-        -- Just remove player from vehicle outside
         TaskLeaveVehicle(PlayerPedId(), vehicle, 0)
         Wait(2000)
     end
@@ -376,7 +377,7 @@ end
 --------------------------------------------------------------
 
 local function heliRescueSequence(medicPed, vehicle, playerCoords, hospital)
-    -- 1. Fly toward player
+    -- 1. Cruise toward player
     TaskHeliMission(
         medicPed, vehicle, 0, 0,
         playerCoords.x, playerCoords.y, playerCoords.z + 30.0,
@@ -385,7 +386,7 @@ local function heliRescueSequence(medicPed, vehicle, playerCoords, hospital)
     if not waitForVehicleToReach(vehicle, playerCoords, 40.0, 90000) then return end
     if cancelDispatch then return end
 
-    -- 2. Descend and hover over player
+    -- 2. Hover over player
     TaskHeliMission(
         medicPed, vehicle, 0, 0,
         playerCoords.x, playerCoords.y, playerCoords.z + 8.0,
@@ -399,7 +400,7 @@ local function heliRescueSequence(medicPed, vehicle, playerCoords, hospital)
     Wait(1000)
     if cancelDispatch then return end
 
-    -- 4. Fly to hospital helipad
+    -- 4. Cruise to hospital helipad
     local helipad = hospital.helipad
     TaskHeliMission(
         medicPed, vehicle, 0, 0,
@@ -409,7 +410,7 @@ local function heliRescueSequence(medicPed, vehicle, playerCoords, hospital)
     if not waitForVehicleToReach(vehicle, helipad, 25.0, 120000) then return end
     if cancelDispatch then return end
 
-    -- 5. Land on helipad
+    -- 5. Land
     TaskHeliMission(
         medicPed, vehicle, 0, 0,
         helipad.x, helipad.y, helipad.z,
@@ -482,7 +483,7 @@ local function dispatchAIAmbulance()
         return
     end
 
-    -- Ensure the player is actually incapacitated
+    -- Player must be incapacitated
     if not isdead(QB) then
         crossNotify(QB, "~r~You must be incapacitated to call for AI assistance.")
         return
@@ -514,17 +515,14 @@ local function dispatchAIAmbulance()
         return
     end
 
-    -- Player notification
+    -- Notify the player that help is on the way
     local notifKey = "Ambulance"
-    if dispatchType == "heli" then notifKey = "Heli"
+    if dispatchType == "heli"  then notifKey = "Heli"
     elseif dispatchType == "boat" then notifKey = "Boat" end
 
     if Config.notifications[notifKey] then
         crossNotify(QB, Config.notifications[notifKey])
     end
-
-    -- Inform server so EMS can be notified
-    TriggerServerEvent('enyo-aiambulance:server:notifyEMS', hospital.ExtraVariables)
 
     Citizen.CreateThread(function()
         local medicPed, vehicle = nil, nil
@@ -547,8 +545,10 @@ local function dispatchAIAmbulance()
 
         if not cancelDispatch then
             if Config.revive then
+                -- Tell the server to trigger the revive event on this player
                 TriggerServerEvent('enyo-aiambulance:server:revivePlayer', hospital.ExtraVariables)
             else
+                -- Drop-off mode: trigger the EMS notification locally on this client
                 TriggerEvent('enyo-aiambulance:client:notifyEMS', hospital.ExtraVariables)
             end
         end
