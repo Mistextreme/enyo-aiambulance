@@ -13,22 +13,21 @@
             background-color: black;
             display: none;
         }
-        
+
         html {
             margin: 0;
             padding: 0;
             height: 100%;
         }
-        
+
         iframe,
         video {
             width: 100%;
             height: 100%;
             border: none;
             object-fit: cover;
-            /* Maintain aspect ratio */
         }
-        
+
         #video-container {
             width: 100%;
             height: 100%;
@@ -37,55 +36,52 @@
             align-items: center;
         }
     </style>
-    <script src="https://www.youtube.com/iframe_api"></script>
 </head>
 
 <body>
     <div id="video-container">
-        <iframe id="ytplayer" style="position:absolute;z-index:98" type="text/html" src="" frameborder="0" allowfullscreen></iframe>
-        <video id="localPlayer" style="position:absolute;z-index:99" controls></video>
+        <iframe id="ytplayer" style="position:absolute;z-index:98;display:none;" type="text/html" src="" frameborder="0" allowfullscreen></iframe>
+        <video id="localPlayer" style="position:absolute;z-index:99;visibility:hidden;"></video>
     </div>
 
     <script>
-        let player; // Define player variable globally
-
         function showUI() {
-            document.body.style.display = "flex"; // Show the UI
+            document.body.style.display = "flex";
         }
 
         function hideUI() {
-            document.body.style.display = "none"; // Hide the UI
+            document.body.style.display = "none";
         }
 
         function playYouTubeVideo(videoUrl) {
-            const iframe = document.getElementById('ytplayer');
-            iframe.src = "https://www.youtube.com/embed/" + extractVideoId(videoUrl) + "?autoplay=1&controls=0&disablekb=1&modestbranding=1&rel=0&showinfo=0&enablejsapi=1";
+            const iframe      = document.getElementById('ytplayer');
+            const localPlayer = document.getElementById('localPlayer'); // FIX: was bare undeclared variable
 
-            // Make the UI visible when the video starts playing
+            // Show YouTube iframe, hide local video player
+            iframe.style.display         = 'block';
+            localPlayer.style.visibility = 'hidden';
+
+            iframe.src = "https://www.youtube.com/embed/"
+                + extractVideoId(videoUrl)
+                + "?autoplay=1&controls=0&disablekb=1&modestbranding=1&rel=0&showinfo=0&enablejsapi=1";
+
             showUI();
-            iframe.style.display = 'block'; // Hide YouTube iframe
-            localPlayer.style.visibility = 'hidden'; // Show local video player
 
-            // When the iframe is loaded, listen for the video end event
-            const player = new YT.Player('ytplayer', {
+            // YT.Player wraps the iframe to capture onStateChange
+            new YT.Player('ytplayer', {
                 events: {
                     'onStateChange': onPlayerStateChange
                 }
             });
         }
 
-        // This function handles when the video finishes
         function onPlayerStateChange(event) {
-            if (event.data == YT.PlayerState.ENDED) {
-                // Notify Lua that the video has ended
+            if (event.data === YT.PlayerState.ENDED) {
                 fetch('https://' + GetParentResourceName() + '/videoEnded', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json; charset=UTF-8'
-                    },
+                    headers: { 'Content-Type': 'application/json; charset=UTF-8' },
                     body: JSON.stringify({})
                 }).then(() => {
-                    // Hide the NUI when the video ends
                     hideUI();
                 });
             }
@@ -93,46 +89,43 @@
 
         function extractVideoId(url) {
             const regExp = /^.*(?:youtu.be\/|v\/|\/u\/\w\/|embed\/|watch\?v=|&v=)([^&\n]{11}).*/;
-            const match = url.match(regExp);
-            return (match && match[1]) ? match[1] : null; // Return the video ID
+            const match  = url.match(regExp);
+            return (match && match[1]) ? match[1] : null;
         }
 
         function playLocalVideo(videoPath) {
-            const iframe = document.getElementById('ytplayer');
+            const iframe      = document.getElementById('ytplayer');
             const localPlayer = document.getElementById('localPlayer');
 
-            iframe.style.display = 'none'; // Hide YouTube iframe
-            localPlayer.style.visibility = 'visible'; // Show local video player
-            localPlayer.src = videoPath;
+            // Hide YouTube iframe, show local video player
+            iframe.style.display         = 'none';
+            localPlayer.style.visibility = 'visible';
+            localPlayer.src              = videoPath;
 
-            localPlayer.onerror = function() {
-                alert("Error loading the video. Please check the file path.");
+            localPlayer.onerror = function () {
                 hideUI();
             };
 
             localPlayer.play().then(() => {
                 showUI();
-            }).catch(error => {
-                alert("Error playing the video.");
+            }).catch(() => {
                 hideUI();
             });
 
-            localPlayer.onended = notifyVideoEnded; // Listen for video end
+            localPlayer.onended = notifyVideoEnded;
         }
 
         function notifyVideoEnded() {
-            fetch(`https://${GetParentResourceName()}/videoEnded`, {
+            fetch('https://' + GetParentResourceName() + '/videoEnded', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json; charset=UTF-8'
-                },
+                headers: { 'Content-Type': 'application/json; charset=UTF-8' },
                 body: JSON.stringify({})
             }).then(() => {
                 hideUI();
             });
         }
 
-        window.addEventListener('message', function(event) {
+        window.addEventListener('message', function (event) {
             const data = event.data;
             if (data.action === 'playVideo') {
                 if (data.videoType === 'youtube') {
@@ -143,9 +136,9 @@
             }
         });
 
-        // Load YouTube API script dynamically
+        // Load the YouTube IFrame API once via dynamic script tag
         const tag = document.createElement('script');
-        tag.src = "https://www.youtube.com/iframe_api";
+        tag.src   = "https://www.youtube.com/iframe_api";
         document.body.appendChild(tag);
     </script>
 </body>
